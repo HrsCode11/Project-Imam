@@ -1,0 +1,38 @@
+<?php
+declare(strict_types=1);
+require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/report_helper.php';
+$pageTitle='Laporan Pendapatan';
+$period=report_period();
+$summary=report_summary($pdo,$period['start'],$period['end']);
+$today = date('Y-m-d');
+$todayStmt = $pdo->prepare(
+    'SELECT COUNT(*) FROM transaksi
+     WHERE tanggal_transaksi >= ?
+       AND tanggal_transaksi < DATE_ADD(?, INTERVAL 1 DAY)'
+);
+$todayStmt->execute([$today, $today]);
+$todayTransactionCount = (int)$todayStmt->fetchColumn();
+$categories=report_categories($pdo,$period['start'],$period['end']);
+$transactions=report_transactions($pdo,$period['start'],$period['end']);
+$chart=report_chart($pdo,$period['start'],$period['end']);
+$categoryMap=['Rambut'=>['jumlah'=>0,'total'=>0.0],'Perawatan'=>['jumlah'=>0,'total'=>0.0]];
+foreach($categories as $cat) if(isset($categoryMap[$cat['kategori']])) $categoryMap[$cat['kategori']]=['jumlah'=>(int)$cat['jumlah'],'total'=>(float)$cat['total']];
+$maxChart=max(array_map(static fn($r)=>(float)$r['total'],$chart)?:[0]);
+$average=(int)$summary['jumlah']>0?(float)$summary['total']/(int)$summary['jumlah']:0;
+$categoryTotal=(float)$categoryMap['Rambut']['total']+(float)$categoryMap['Perawatan']['total'];
+$hairDegrees=$categoryTotal>0?round(((float)$categoryMap['Rambut']['total']/$categoryTotal)*360,1):0;
+require __DIR__ . '/includes/header.php';
+?>
+<section class="panel filter-panel"><form method="get" class="filter-row report-filter"><div class="form-group period-select"><label for="periode">Rentang Periode</label><select class="input" id="periode" name="periode"><option value="mingguan" <?= $period['periode']==='mingguan'?'selected':'' ?>>Minggu Ini</option><option value="bulanan" <?= $period['periode']==='bulanan'?'selected':'' ?>>Bulan Ini</option><option value="custom" <?= $period['periode']==='custom'?'selected':'' ?>>Rentang Tanggal</option></select></div><div class="form-group"><label for="tanggal_awal">Tanggal Awal</label><input class="input" type="date" id="tanggal_awal" name="tanggal_awal" value="<?= e($period['start']) ?>"></div><div class="form-group"><label for="tanggal_akhir">Tanggal Akhir</label><input class="input" type="date" id="tanggal_akhir" name="tanggal_akhir" value="<?= e($period['end']) ?>"></div><div class="filter-actions"><button class="btn btn-dark" type="submit">Tampilkan</button><a class="btn btn-light" href="<?= BASE_URL ?>/laporan.php">Reset</a></div></form><div class="report-period-foot"><span>Periode aktif: <?= e(date('d/m/Y',strtotime($period['start']))) ?> – <?= e(date('d/m/Y',strtotime($period['end']))) ?></span><strong><?= (int)$summary['jumlah'] ?> Transaksi Terpilih</strong></div></section>
+<section class="stats-grid report-stats">
+<article class="stat-card"><div class="stat-head"><span>Total Pendapatan</span><span class="stat-symbol">Rp</span></div><strong class="stat-value compact"><?= rupiah($summary['total']) ?></strong><small>Akumulasi periode aktif</small></article>
+<article class="stat-card"><div class="stat-head"><span>Jumlah Transaksi</span><span class="stat-symbol"><?= ui_icon('receipt') ?></span></div><strong class="stat-value"><?= (int)$summary['jumlah'] ?></strong><small><?= e($period['label']) ?></small></article>
+<article class="stat-card"><div class="stat-head"><span>Transaksi Hari Ini</span><span class="stat-symbol"><?= ui_icon('calendar') ?></span></div><strong class="stat-value"><?= $todayTransactionCount ?></strong><small><?= e(date('d/m/Y')) ?></small></article>
+<article class="stat-card"><div class="stat-head"><span>Rata-rata Transaksi</span><span class="stat-symbol"><?= ui_icon('chart-column') ?></span></div><strong class="stat-value compact"><?= rupiah($average) ?></strong><small>Rata-rata nilai transaksi</small></article>
+</section>
+<div class="content-grid report-grid"><section class="panel"><div class="panel-heading"><div><h2>Grafik Perbandingan Pendapatan</h2><p>Perubahan pendapatan berdasarkan tanggal pada periode terpilih.</p></div><span class="pill"><?= e($period['label']) ?></span></div><?php if(!$chart): ?><div class="empty-state compact-empty">Belum ada transaksi pada periode ini.</div><?php else: ?><div class="bar-chart report-chart"><?php foreach($chart as $row): $height=$maxChart>0?max(5,(int)round(((float)$row['total']/$maxChart)*125)):5; ?><div class="bar-column"><span class="bar-tooltip"><?= rupiah($row['total']) ?></span><div class="bar-track"><div class="bar-fill" style="height:<?= $height ?>px"></div></div><span class="bar-label"><?= e(date('d/m',strtotime($row['tanggal']))) ?></span></div><?php endforeach; ?></div><?php endif; ?><div class="report-chart-foot">Grafik dihitung dari transaksi yang tersimpan di basis data.</div></section>
+<section class="panel category-panel"><div class="panel-heading"><div><h2>Porsi Pendapatan per Kategori</h2><p>Kontribusi kategori layanan terhadap pendapatan.</p></div></div><div class="donut-area"><div class="donut-chart" style="background:<?= $categoryTotal > 0 ? 'conic-gradient(#0f172a 0deg '.$hairDegrees.'deg, #f59e0b '.$hairDegrees.'deg 360deg)' : 'conic-gradient(#e2e8f0 0deg 360deg)' ?>"><div class="donut-center"><small>Total Nilai</small><strong><?= rupiah($categoryTotal) ?></strong></div></div><div class="donut-legend"><div class="donut-legend-row"><span class="donut-dot"></span><span>Rambut<small><?= (int)$categoryMap['Rambut']['jumlah'] ?> transaksi</small></span><strong><?= rupiah($categoryMap['Rambut']['total']) ?></strong></div><div class="donut-legend-row"><span class="donut-dot orange"></span><span>Perawatan<small><?= (int)$categoryMap['Perawatan']['jumlah'] ?> transaksi</small></span><strong><?= rupiah($categoryMap['Perawatan']['total']) ?></strong></div></div></div></section></div>
+<section class="panel table-panel"><div class="panel-heading"><div><h2>Daftar Transaksi Periode Ini</h2><p><?= count($transactions) ?> transaksi dalam laporan.</p></div><span class="pill">Maksimal 20 baris</span></div><div class="table-wrap"><table><thead><tr><th>No. Transaksi</th><th>Waktu</th><th>Pelanggan</th><th>Layanan</th><th>Kategori</th><th>Total</th></tr></thead><tbody><?php if(!$transactions): ?><tr><td colspan="6"><div class="empty-state">Belum ada transaksi pada periode yang dipilih.</div></td></tr><?php else: foreach(array_slice($transactions,0,20) as $row): ?><tr><td><strong><?= e($row['no_transaksi']) ?></strong></td><td><?= e(date('d/m/Y H:i',strtotime($row['tanggal_transaksi']))) ?></td><td><?= e($row['nama_pelanggan']) ?></td><td><?= e($row['layanan']?:'-') ?></td><td><span class="badge <?= ($row['kategori']??'')==='Perawatan'?'badge-green':'badge-gray' ?>"><?= e($row['kategori']?:'-') ?></span></td><td><strong><?= rupiah($row['total_biaya']) ?></strong></td></tr><?php endforeach; endif; ?></tbody></table></div><?php if(count($transactions)>20): ?><p class="table-footnote">Menampilkan 20 transaksi pertama. File ekspor memuat seluruh transaksi pada periode aktif.</p><?php endif; ?></section>
+<section class="panel export-panel"><div class="panel-heading"><div><h2>Ekspor &amp; Unduh Rekap Laporan</h2><p>Simpan laporan dalam format CSV untuk spreadsheet atau PDF untuk dicetak.</p></div></div><div class="export-actions"><a class="btn btn-light" href="<?= BASE_URL ?>/export_pdf.php?<?= e(report_query($period)) ?>" download="Laporan_By_Riska_Salon.pdf"><?= ui_icon('file-pdf') ?> Ekspor PDF (Cetak)</a><a class="btn btn-dark" href="<?= BASE_URL ?>/export_csv.php?<?= e(report_query($period)) ?>"><?= ui_icon('file-spreadsheet') ?> Ekspor CSV / Excel</a></div></section>
+<?php require __DIR__ . '/includes/footer.php'; ?>
